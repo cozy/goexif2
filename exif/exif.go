@@ -477,12 +477,12 @@ func ratFloat(num, dem int64) float64 {
 // Tries to parse a Geo degrees value from a string as it was found in some
 // EXIF data.
 // Supported formats so far:
-// - "52,00000,50,00000,34,01180" ==> 52 deg 50'34.0118"
-//   Probably due to locale the comma is used as decimal mark as well as the
-//   separator of three floats (degrees, minutes, seconds)
-//   http://en.wikipedia.org/wiki/Decimal_mark#Hindu.E2.80.93Arabic_numeral_system
-// - "52.0,50.0,34.01180" ==> 52deg50'34.0118"
-// - "52,50,34.01180"     ==> 52deg50'34.0118"
+//   - "52,00000,50,00000,34,01180" ==> 52 deg 50'34.0118"
+//     Probably due to locale the comma is used as decimal mark as well as the
+//     separator of three floats (degrees, minutes, seconds)
+//     http://en.wikipedia.org/wiki/Decimal_mark#Hindu.E2.80.93Arabic_numeral_system
+//   - "52.0,50.0,34.01180" ==> 52deg50'34.0118"
+//   - "52,50,34.01180"     ==> 52deg50'34.0118"
 func parseTagDegreesString(s string) (float64, error) {
 	const unparsableErrorFmt = "Unknown coordinate format: %s"
 	isSplitRune := func(c rune) bool {
@@ -753,7 +753,7 @@ func (x *Exif) Flash() (string, error) {
 }
 
 func newHEICReader(r io.Reader) (io.Reader, error) {
-	bufr := bufio.NewReader(io.LimitReader(r, 64*1024))
+	bufr := bufio.NewReader(io.LimitReader(r, 5*1024*1024))
 	offr := newOffsetReader(bufr)
 	extentOffset, extentLength, extentFound, err := metaBox(offr)
 	if err != nil {
@@ -804,8 +804,6 @@ func metaBox(r io.Reader) (extentOffset, extentLength int, extentFound bool, err
 				return
 			}
 			return parseILOC(b, exifItemID)
-		case "mdat":
-			return
 		default:
 			_, err = discard(r, b.size)
 			if err != nil {
