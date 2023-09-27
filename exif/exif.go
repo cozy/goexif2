@@ -430,7 +430,18 @@ func (x *Exif) DateTime() (time.Time, error) {
 	}
 	exifTimeLayout := "2006:01:02 15:04:05"
 	dateStr := strings.TrimRight(tagVal, "\x00")
-	// TODO(bradfitz,mpl): look for timezone offset, GPS time, etc.
+
+	offset, err := x.Get(OffsetTimeOriginal)
+	if err != nil {
+		offset, err = x.Get(OffsetTime)
+	}
+	fmt.Printf("offset = %#v\n", offset)
+	if err == nil {
+		exifTimeLayout += " Z07:00"
+		dateStr += " " + strings.Trim(offset.String(), `"`)
+		return time.Parse(exifTimeLayout, dateStr)
+	}
+
 	timeZone := time.Local
 	if tz, _ := x.TimeZone(); tz != nil {
 		timeZone = tz

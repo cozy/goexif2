@@ -49,6 +49,9 @@ const (
 	SubSecTime                 FieldName = "SubSecTime"
 	SubSecTimeOriginal         FieldName = "SubSecTimeOriginal"
 	SubSecTimeDigitized        FieldName = "SubSecTimeDigitized"
+	OffsetTime                 FieldName = "OffsetTime"
+	OffsetTimeOriginal         FieldName = "OffsetTimeOriginal"
+	OffsetTimeDigitized        FieldName = "OffsetTimeDigitized"
 	ImageUniqueID              FieldName = "ImageUniqueID"
 	ExposureTime               FieldName = "ExposureTime"
 	FNumber                    FieldName = "FNumber"
@@ -213,6 +216,9 @@ var exifFields = map[uint16]FieldName{
 	0x9290: SubSecTime,
 	0x9291: SubSecTimeOriginal,
 	0x9292: SubSecTimeDigitized,
+	0x9010: OffsetTime,
+	0x9011: OffsetTimeOriginal,
+	0x9012: OffsetTimeDigitized,
 
 	0xA420: ImageUniqueID,
 
