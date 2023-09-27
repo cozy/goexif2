@@ -435,7 +435,6 @@ func (x *Exif) DateTime() (time.Time, error) {
 	if err != nil {
 		offset, err = x.Get(OffsetTime)
 	}
-	fmt.Printf("offset = %#v\n", offset)
 	if err == nil {
 		exifTimeLayout += " Z07:00"
 		dateStr += " " + strings.Trim(offset.String(), `"`)
