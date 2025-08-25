@@ -43,6 +43,9 @@ const (
 	RelatedSoundFile           FieldName = "RelatedSoundFile"
 	DateTimeOriginal           FieldName = "DateTimeOriginal"
 	DateTimeDigitized          FieldName = "DateTimeDigitized"
+	OffsetTime                 FieldName = "OffsetTime"
+	OffsetTimeOriginal         FieldName = "OffsetTimeOriginal"
+	OffsetTimeDigitized        FieldName = "OffsetTimeDigized"
 	SubSecTime                 FieldName = "SubSecTime"
 	SubSecTimeOriginal         FieldName = "SubSecTimeOriginal"
 	SubSecTimeDigitized        FieldName = "SubSecTimeDigitized"
@@ -207,6 +210,9 @@ var exifFields = map[uint16]FieldName{
 	0x882A: TimeZoneOffset,
 	0x9003: DateTimeOriginal,
 	0x9004: DateTimeDigitized,
+	0x9010: OffsetTime,          // time zone for ModifyDate
+	0x9011: OffsetTimeOriginal,  // time zone for DateTimeOriginal
+	0x9012: OffsetTimeDigitized, // time zone for CreateDate
 	0x9290: SubSecTime,
 	0x9291: SubSecTimeOriginal,
 	0x9292: SubSecTimeDigitized,

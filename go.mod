@@ -1,3 +1,3 @@
-module github.com/cozy/goexif2
+module github.com/mholt/goexif2
 
-go 1.18
+go 1.20
