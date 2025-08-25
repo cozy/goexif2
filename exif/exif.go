@@ -453,9 +453,9 @@ func (x *Exif) TimeZone() (*time.Location, error) {
 	// TimeZoneOffset
 	timeOffset, err := x.Get(TimeZoneOffset)
 	if err != nil {
-		timeOffset, err = x.Get(OffsetTime)
+		timeOffset, err = x.Get(OffsetTimeOriginal) // prefer OffsetTimeOriginal just as DateTimeOriginal is preferred in DateTime(), otherwise inconsistent time zone possible
 		if err != nil {
-			timeOffset, err = x.Get(OffsetTimeOriginal)
+			timeOffset, err = x.Get(OffsetTime)
 		}
 		if err != nil {
 			timeOffset, err = x.Get(OffsetTimeDigitized)
