@@ -292,10 +292,7 @@ func TestShortRead(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-// makeAPP1 builds an APP1 segment with the given payload.
 func makeAPP1(payload []byte) []byte {
-	// length = payload + 2 bytes for length field
 	seg := []byte{0xFF, 0xE1}
 	length := make([]byte, 2)
 	binary.BigEndian.PutUint16(length, uint16(len(payload)+2))
@@ -305,29 +302,20 @@ func makeAPP1(payload []byte) []byte {
 }
 
 func TestNewAppSec_MultipleAPP1(t *testing.T) {
-	// fake JPEG: SOI, bad APP1, good APP1, EOI
 	var jpeg []byte
 	jpeg = append(jpeg, 0xFF, 0xD8) // SOI
-
-	// APP1 with invalid header
 	jpeg = append(jpeg, makeAPP1([]byte("NotExif"))...)
-
-	// APP1 with valid Exif intro
 	jpeg = append(jpeg, makeAPP1(append([]byte("Exif\x00\x00"), []byte("tiffdata")...))...)
-
 	jpeg = append(jpeg, 0xFF, 0xD9) // EOI
 
 	app, err := newAppSec(0xE1, bytes.NewReader(jpeg))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	r, err := app.exifReader()
 	if err != nil {
 		t.Fatalf("exifReader failed: %v", err)
 	}
-
-	// the reader should now start at "tiffdata"
 	got := make([]byte, 8)
 	if _, err := r.Read(got); err != nil {
 		t.Fatalf("read failed: %v", err)
@@ -338,17 +326,26 @@ func TestNewAppSec_MultipleAPP1(t *testing.T) {
 }
 
 func TestNewAppSec_NoExifFound(t *testing.T) {
-	// fake JPEG: SOI, only bad APP1, EOI
 	var jpeg []byte
 	jpeg = append(jpeg, 0xFF, 0xD8) // SOI
-
-	// APP1 with invalid header only
 	jpeg = append(jpeg, makeAPP1([]byte("NotExif"))...)
-
 	jpeg = append(jpeg, 0xFF, 0xD9) // EOI
 
-	_, err := newAppSec(0xE1, bytes.NewReader(jpeg))
-	if err == nil {
+	if _, err := newAppSec(0xE1, bytes.NewReader(jpeg)); err == nil {
 		t.Fatalf("expected error when no valid Exif APP1 found, got nil")
+	}
+}
+
+func TestNewAppSec_InvalidLength_NoPanic(t *testing.T) {
+	// Construct an APP1 with invalid segment length (1), which is < 2.
+	// The code should return an error, not panic.
+	var jpeg []byte
+	jpeg = append(jpeg, 0xFF, 0xD8) // SOI
+	jpeg = append(jpeg, 0xFF, 0xE1) // APP1
+	jpeg = append(jpeg, 0x00, 0x01) // segLen = 1 (invalid)
+	jpeg = append(jpeg, 0xFF, 0xD9) // EOI
+
+	if _, err := newAppSec(0xE1, bytes.NewReader(jpeg)); err == nil {
+		t.Fatalf("expected error for invalid segment length, got nil")
 	}
 }

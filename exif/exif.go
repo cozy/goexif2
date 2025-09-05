@@ -711,37 +711,75 @@ func newAppSec(marker byte, r io.Reader) (*appSec, error) {
 	br := bufio.NewReader(r)
 
 	for {
-		// seek to next marker
-		if _, err := br.ReadBytes(0xFF); err != nil {
+		// Seek to a 0xFF byte
+		b, err := br.ReadByte()
+		if err != nil {
 			return nil, err
 		}
+		if b != 0xFF {
+			continue
+		}
+
+		// Consume any fill 0xFFs
 		c, err := br.ReadByte()
 		if err != nil {
 			return nil, err
 		}
-		if c != marker {
-			// not the marker we want, keep going
+		for c == 0xFF {
+			c, err = br.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+		}
+		if c == 0x00 {
+			// stuffed zero (should not appear before SOS, but be tolerant)
 			continue
 		}
 
-		// read section length
-		dataLenBytes := make([]byte, 2)
-		if _, err := io.ReadFull(br, dataLenBytes); err != nil {
+		// Markers with no payload: SOI, EOI, RST0-7, TEM
+		if c == 0xD8 || c == 0xD9 || (c >= 0xD0 && c <= 0xD7) || c == 0x01 {
+			continue
+		}
+		// SOS: after this is entropy-coded data; stop scanning
+		if c == 0xDA {
+			return nil, errors.New("exif: reached SOS before finding APP1 Exif")
+		}
+
+		// All other markers have a 2-byte big-endian length (includes the 2 bytes)
+		var lenBytes [2]byte
+		if _, err := io.ReadFull(br, lenBytes[:]); err != nil {
 			return nil, err
 		}
-		dataLen := int(binary.BigEndian.Uint16(dataLenBytes)) - 2
+		segLen := int(binary.BigEndian.Uint16(lenBytes[:]))
+		if segLen < 2 {
+			return nil, errors.New("exif: invalid JPEG segment length (<2)")
+		}
+		payloadLen := segLen - 2
 
-		// read section data
-		data := make([]byte, dataLen)
+		if c != marker {
+			// Skip non-target segment payload to keep alignment
+			if _, err := io.CopyN(io.Discard, br, int64(payloadLen)); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		// Read target segment payload safely
+		if payloadLen < 6 {
+			// Can't hold "Exif\x00\x00"; skip it
+			if _, err := io.CopyN(io.Discard, br, int64(payloadLen)); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		data := make([]byte, payloadLen)
 		if _, err := io.ReadFull(br, data); err != nil {
 			return nil, err
 		}
-
-		// check if this section is actually Exif
 		if bytes.HasPrefix(data, []byte("Exif\x00\x00")) {
 			return &appSec{marker: marker, data: data}, nil
 		}
-		// otherwise keep scanning, maybe the next APP1 has Exif
+		// Not an EXIF APP1; keep scanning
 	}
 }
 
