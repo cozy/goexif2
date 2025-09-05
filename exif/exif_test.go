@@ -4,6 +4,8 @@ package exif
 //go:generate go fmt regress_expected_test.go
 
 import (
+	"bytes"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -288,5 +290,65 @@ func TestShortRead(t *testing.T) {
 	_, err = Decode(stutteredReader{f, 1})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// makeAPP1 builds an APP1 segment with the given payload.
+func makeAPP1(payload []byte) []byte {
+	// length = payload + 2 bytes for length field
+	seg := []byte{0xFF, 0xE1}
+	length := make([]byte, 2)
+	binary.BigEndian.PutUint16(length, uint16(len(payload)+2))
+	seg = append(seg, length...)
+	seg = append(seg, payload...)
+	return seg
+}
+
+func TestNewAppSec_MultipleAPP1(t *testing.T) {
+	// fake JPEG: SOI, bad APP1, good APP1, EOI
+	var jpeg []byte
+	jpeg = append(jpeg, 0xFF, 0xD8) // SOI
+
+	// APP1 with invalid header
+	jpeg = append(jpeg, makeAPP1([]byte("NotExif"))...)
+
+	// APP1 with valid Exif intro
+	jpeg = append(jpeg, makeAPP1(append([]byte("Exif\x00\x00"), []byte("tiffdata")...))...)
+
+	jpeg = append(jpeg, 0xFF, 0xD9) // EOI
+
+	app, err := newAppSec(0xE1, bytes.NewReader(jpeg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	r, err := app.exifReader()
+	if err != nil {
+		t.Fatalf("exifReader failed: %v", err)
+	}
+
+	// the reader should now start at "tiffdata"
+	got := make([]byte, 8)
+	if _, err := r.Read(got); err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	if string(got) != "tiffdata" {
+		t.Errorf("expected payload %q, got %q", "tiffdata", string(got))
+	}
+}
+
+func TestNewAppSec_NoExifFound(t *testing.T) {
+	// fake JPEG: SOI, only bad APP1, EOI
+	var jpeg []byte
+	jpeg = append(jpeg, 0xFF, 0xD8) // SOI
+
+	// APP1 with invalid header only
+	jpeg = append(jpeg, makeAPP1([]byte("NotExif"))...)
+
+	jpeg = append(jpeg, 0xFF, 0xD9) // EOI
+
+	_, err := newAppSec(0xE1, bytes.NewReader(jpeg))
+	if err == nil {
+		t.Fatalf("expected error when no valid Exif APP1 found, got nil")
 	}
 }

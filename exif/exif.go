@@ -709,44 +709,40 @@ type appSec struct {
 // section.
 func newAppSec(marker byte, r io.Reader) (*appSec, error) {
 	br := bufio.NewReader(r)
-	app := &appSec{marker: marker}
-	var dataLen int
 
-	// seek to marker
-	for dataLen == 0 {
+	for {
+		// seek to next marker
 		if _, err := br.ReadBytes(0xFF); err != nil {
 			return nil, err
 		}
 		c, err := br.ReadByte()
 		if err != nil {
 			return nil, err
-		} else if c != marker {
+		}
+		if c != marker {
+			// not the marker we want, keep going
 			continue
 		}
 
+		// read section length
 		dataLenBytes := make([]byte, 2)
-		for k := range dataLenBytes {
-			c, err := br.ReadByte()
-			if err != nil {
-				return nil, err
-			}
-			dataLenBytes[k] = c
-		}
-		dataLen = int(binary.BigEndian.Uint16(dataLenBytes)) - 2
-	}
-
-	// read section data
-	nread := 0
-	for nread < dataLen {
-		s := make([]byte, dataLen-nread)
-		n, err := br.Read(s)
-		nread += n
-		if err != nil && nread < dataLen {
+		if _, err := io.ReadFull(br, dataLenBytes); err != nil {
 			return nil, err
 		}
-		app.data = append(app.data, s[:n]...)
+		dataLen := int(binary.BigEndian.Uint16(dataLenBytes)) - 2
+
+		// read section data
+		data := make([]byte, dataLen)
+		if _, err := io.ReadFull(br, data); err != nil {
+			return nil, err
+		}
+
+		// check if this section is actually Exif
+		if bytes.HasPrefix(data, []byte("Exif\x00\x00")) {
+			return &appSec{marker: marker, data: data}, nil
+		}
+		// otherwise keep scanning, maybe the next APP1 has Exif
 	}
-	return app, nil
 }
 
 // exifReader returns a reader on this appSec with the read cursor advanced to
