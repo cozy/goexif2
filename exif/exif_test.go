@@ -4,6 +4,8 @@ package exif
 //go:generate go fmt regress_expected_test.go
 
 import (
+	"bytes"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -288,5 +290,62 @@ func TestShortRead(t *testing.T) {
 	_, err = Decode(stutteredReader{f, 1})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+func makeAPP1(payload []byte) []byte {
+	seg := []byte{0xFF, 0xE1}
+	length := make([]byte, 2)
+	binary.BigEndian.PutUint16(length, uint16(len(payload)+2))
+	seg = append(seg, length...)
+	seg = append(seg, payload...)
+	return seg
+}
+
+func TestNewAppSec_MultipleAPP1(t *testing.T) {
+	var jpeg []byte
+	jpeg = append(jpeg, 0xFF, 0xD8) // SOI
+	jpeg = append(jpeg, makeAPP1([]byte("NotExif"))...)
+	jpeg = append(jpeg, makeAPP1(append([]byte("Exif\x00\x00"), []byte("tiffdata")...))...)
+	jpeg = append(jpeg, 0xFF, 0xD9) // EOI
+
+	app, err := newAppSec(0xE1, bytes.NewReader(jpeg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	r, err := app.exifReader()
+	if err != nil {
+		t.Fatalf("exifReader failed: %v", err)
+	}
+	got := make([]byte, 8)
+	if _, err := r.Read(got); err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	if string(got) != "tiffdata" {
+		t.Errorf("expected payload %q, got %q", "tiffdata", string(got))
+	}
+}
+
+func TestNewAppSec_NoExifFound(t *testing.T) {
+	var jpeg []byte
+	jpeg = append(jpeg, 0xFF, 0xD8) // SOI
+	jpeg = append(jpeg, makeAPP1([]byte("NotExif"))...)
+	jpeg = append(jpeg, 0xFF, 0xD9) // EOI
+
+	if _, err := newAppSec(0xE1, bytes.NewReader(jpeg)); err == nil {
+		t.Fatalf("expected error when no valid Exif APP1 found, got nil")
+	}
+}
+
+func TestNewAppSec_InvalidLength_NoPanic(t *testing.T) {
+	// Construct an APP1 with invalid segment length (1), which is < 2.
+	// The code should return an error, not panic.
+	var jpeg []byte
+	jpeg = append(jpeg, 0xFF, 0xD8) // SOI
+	jpeg = append(jpeg, 0xFF, 0xE1) // APP1
+	jpeg = append(jpeg, 0x00, 0x01) // segLen = 1 (invalid)
+	jpeg = append(jpeg, 0xFF, 0xD9) // EOI
+
+	if _, err := newAppSec(0xE1, bytes.NewReader(jpeg)); err == nil {
+		t.Fatalf("expected error for invalid segment length, got nil")
 	}
 }

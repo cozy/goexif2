@@ -413,7 +413,7 @@ func (x *Exif) Walk(w Walker) error {
 // were found, or a generic error if the tag value was
 // not a string, or the error returned by time.Parse.
 //
-// If the EXIF lacks timezone information or GPS time, the returned
+// If the EXIF lacks timezone information, the returned
 // time's Location will be time.Local.
 func (x *Exif) DateTime() (time.Time, error) {
 	var dt time.Time
@@ -431,16 +431,8 @@ func (x *Exif) DateTime() (time.Time, error) {
 	exifTimeLayout := "2006:01:02 15:04:05"
 	dateStr := strings.TrimRight(tagVal, "\x00")
 
-	offset, err := x.Get(OffsetTimeOriginal)
-	if err != nil {
-		offset, err = x.Get(OffsetTime)
-	}
-	if err == nil {
-		exifTimeLayout += " Z07:00"
-		dateStr += " " + strings.Trim(offset.String(), `"`)
-		return time.Parse(exifTimeLayout, dateStr)
-	}
-
+	// most cameras which don't include a time zone just write the wall/local time,
+	// so assume that until we find a time zone
 	timeZone := time.Local
 	if tz, _ := x.TimeZone(); tz != nil {
 		timeZone = tz
@@ -448,38 +440,87 @@ func (x *Exif) DateTime() (time.Time, error) {
 	return time.ParseInLocation(exifTimeLayout, dateStr, timeZone)
 }
 
-// Check various EXIF fields for a timezone offset
+// TimeZone tries to resolve a timezone offset from EXIF fields.
+// Priority order (per EXIF spec and deprecation notes):
+//
+//  1. OffsetTimeOriginal (±HH:MM, for DateTimeOriginal)
+//  2. OffsetTime (±HH:MM, for DateTime)
+//  3. TimeZoneOffset (SSHORT hours, deprecated; may contain 2 values)
+//  4. Canon maker note TimeInfo (minutes)
+//
+// Returns a fixed-offset *time.Location or an error if no information is found.
 func (x *Exif) TimeZone() (*time.Location, error) {
-	// TimeZoneOffset
-	timeOffset, err := x.Get(TimeZoneOffset)
-	if err == nil {
+	for _, tag := range []FieldName{OffsetTimeOriginal, OffsetTime} {
+		timeOffset, err := x.Get(tag)
+		if err != nil {
+			continue
+		}
+		s, err := timeOffset.StringVal()
+		if err != nil {
+			continue
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue // blank means "unknown"
+		}
+
+		// Expect format ±HH:MM
+		if len(s) != 6 || (s[0] != '+' && s[0] != '-') || s[3] != ':' {
+			return nil, fmt.Errorf("invalid offset string: %q", s)
+		}
+		hh, err1 := strconv.Atoi(s[1:3])
+		mm, err2 := strconv.Atoi(s[4:6])
+		if err1 != nil || err2 != nil || hh > 23 || mm > 59 {
+			return nil, fmt.Errorf("invalid offset string: %q", s)
+		}
+		sign := 1
+		if s[0] == '-' {
+			sign = -1
+		}
+		seconds := sign * (hh*3600 + mm*60)
+		return time.FixedZone(s, seconds), nil
+	}
+
+	// TimeZoneOffset (deprecated SSHORT hours, may contain 2 values)
+	if timeOffset, err := x.Get(TimeZoneOffset); err == nil {
 		offset, err := timeOffset.Int(0)
 		if err != nil {
 			return nil, err
 		}
-		if offset > 24 {
-			offset -= 65536
-		}
-		if offset < -24 {
-			return nil, errors.New("Invalid timezone offset")
+		// Valid range per spec: -23..+23
+		if offset < -23 || offset > 23 {
+			return nil, fmt.Errorf("invalid timezone offset: %d", offset)
 		}
 		label := fmt.Sprintf("UTC%+d", offset)
-		return time.FixedZone(label, offset*60*60), nil
+		return time.FixedZone(label, offset*3600), nil
 	}
-	// Other common model fields
-	timeInfo, err := x.Get("Canon.TimeInfo")
-	if err == nil {
+
+	//  Canon maker note TimeInfo
+	if timeInfo, err := x.Get("Canon.TimeInfo"); err == nil {
 		if timeInfo.Count < 2 {
-			return nil, errors.New("Canon.TimeInfo does not contain timezone")
+			return nil, errors.New("Canon.TimeInfo missing timezone field")
 		}
 		offsetMinutes, err := timeInfo.Int(1)
 		if err != nil {
 			return nil, err
 		}
-		return time.FixedZone("", offsetMinutes*60), nil
+		// Canon uses -32768 to mean "unknown"
+		if offsetMinutes == -32768 {
+			return nil, errors.New("Canon.TimeInfo timezone unknown")
+		}
+		label := fmt.Sprintf("UTC%+d:%02d", offsetMinutes/60, abs(offsetMinutes%60))
+		return time.FixedZone(label, offsetMinutes*60), nil
 	}
-	// TODO: parse more timezone fields (e.g. Nikon WorldTime).
-	return nil, errors.New("No time zone information found")
+
+	// TODO: support other maker notes (e.g. Nikon WorldTime)
+	return nil, errors.New("no timezone information found")
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 func ratFloat(num, dem int64) float64 {
@@ -691,44 +732,78 @@ type appSec struct {
 // section.
 func newAppSec(marker byte, r io.Reader) (*appSec, error) {
 	br := bufio.NewReader(r)
-	app := &appSec{marker: marker}
-	var dataLen int
 
-	// seek to marker
-	for dataLen == 0 {
-		if _, err := br.ReadBytes(0xFF); err != nil {
-			return nil, err
-		}
-		c, err := br.ReadByte()
+	for {
+		// Seek to a 0xFF byte
+		b, err := br.ReadByte()
 		if err != nil {
 			return nil, err
-		} else if c != marker {
+		}
+		if b != 0xFF {
 			continue
 		}
 
-		dataLenBytes := make([]byte, 2)
-		for k := range dataLenBytes {
-			c, err := br.ReadByte()
+		// Consume any fill 0xFFs
+		c, err := br.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		for c == 0xFF {
+			c, err = br.ReadByte()
 			if err != nil {
 				return nil, err
 			}
-			dataLenBytes[k] = c
 		}
-		dataLen = int(binary.BigEndian.Uint16(dataLenBytes)) - 2
-	}
+		if c == 0x00 {
+			// stuffed zero (should not appear before SOS, but be tolerant)
+			continue
+		}
 
-	// read section data
-	nread := 0
-	for nread < dataLen {
-		s := make([]byte, dataLen-nread)
-		n, err := br.Read(s)
-		nread += n
-		if err != nil && nread < dataLen {
+		// Markers with no payload: SOI, EOI, RST0-7, TEM
+		if c == 0xD8 || c == 0xD9 || (c >= 0xD0 && c <= 0xD7) || c == 0x01 {
+			continue
+		}
+		// SOS: after this is entropy-coded data; stop scanning
+		if c == 0xDA {
+			return nil, errors.New("exif: reached SOS before finding APP1 Exif")
+		}
+
+		// All other markers have a 2-byte big-endian length (includes the 2 bytes)
+		var lenBytes [2]byte
+		if _, err := io.ReadFull(br, lenBytes[:]); err != nil {
 			return nil, err
 		}
-		app.data = append(app.data, s[:n]...)
+		segLen := int(binary.BigEndian.Uint16(lenBytes[:]))
+		if segLen < 2 {
+			return nil, errors.New("exif: invalid JPEG segment length (<2)")
+		}
+		payloadLen := segLen - 2
+
+		if c != marker {
+			// Skip non-target segment payload to keep alignment
+			if _, err := io.CopyN(io.Discard, br, int64(payloadLen)); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		// Read target segment payload safely
+		if payloadLen < 6 {
+			// Can't hold "Exif\x00\x00"; skip it
+			if _, err := io.CopyN(io.Discard, br, int64(payloadLen)); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		data := make([]byte, payloadLen)
+		if _, err := io.ReadFull(br, data); err != nil {
+			return nil, err
+		}
+		if bytes.HasPrefix(data, []byte("Exif\x00\x00")) {
+			return &appSec{marker: marker, data: data}, nil
+		}
+		// Not an EXIF APP1; keep scanning
 	}
-	return app, nil
 }
 
 // exifReader returns a reader on this appSec with the read cursor advanced to
