@@ -7,10 +7,26 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 var dataDir = flag.String("test_data_dir", ".", "Directory where the data files for testing are located")
+
+func TestDecodeTagLengthOverflow(t *testing.T) {
+	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
+		for _, typ := range []DataType{DTLong, DTSLong, DTFloat, DTRational, DTSRational, DTDouble} {
+			var header [8]byte
+			order.PutUint16(header[2:], uint16(typ))
+			order.PutUint32(header[4:], 0x40000003)
+			// Omit the value offset so an unfixed decoder fails before allocating.
+			_, err := DecodeTag(bytes.NewReader(header[:]), order)
+			if err == nil || !strings.Contains(err.Error(), "tiff: tag length too large") {
+				t.Fatalf("type %d (%v): expected tag length rejection, got %v", typ, order, err)
+			}
+		}
+	}
+}
 
 type input struct {
 	tgId   string
