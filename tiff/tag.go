@@ -156,9 +156,9 @@ func DecodeTag(r ReadAtReader, order binary.ByteOrder) (*Tag, error) {
 		return nil, errUnhandledTagType
 	}
 
-	valLen := size * t.Count
+	valLen := uint64(size) * uint64(t.Count)
 	// avoid trying to read large (corrupted) lengths and parsing potentially gigabytes of exif
-	if TagLengthCutoff > 0 && valLen > TagLengthCutoff {
+	if TagLengthCutoff > 0 && valLen > uint64(TagLengthCutoff) {
 		return t, fmt.Errorf("tiff: tag length too large: %v", valLen)
 	}
 
